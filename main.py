@@ -276,7 +276,15 @@ def main() -> None:
             self.root.after(200, self._poll_queue)
 
         def change_base_dir(self) -> None:
-            pass  # Task 7 で実装
+            chosen = self._prompt_base_dir()
+            if chosen is None:
+                return
+            self._stop_observer()
+            self._start_observer(chosen)
+            if self.observer is not None:
+                cfg = load_config(self.cfg_path)
+                cfg["base_dir"] = str(chosen)
+                save_config(self.cfg_path, cfg)
 
         def quit_app(self) -> None:
             self._stop_observer()
