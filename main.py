@@ -19,7 +19,7 @@ from core import (
     wait_for_unlock,
 )
 from nsips_crypto import encrypt_field
-from nsips_parser import parse_nsips
+from nsips_parser import parse_nsips, sanitize_body
 
 DEFAULT_BASE_DIR = Path(r"C:\solamichi\solamichiclient\client\LOG\NSIPS\OK")
 
@@ -79,7 +79,7 @@ class NsipsHandler(PatternMatchingEventHandler):
         self.stats_client = stats_client
         self.crypto_key = crypto_key
 
-    def _build_ingest_payload(self, path: Path, ts: datetime, parsed: dict) -> dict:
+    def _build_ingest_payload(self, path: Path, ts: datetime, parsed: dict, body: str = "") -> dict:
         k = self.crypto_key
         p = parsed["prescription"]
         source_id = hashlib.sha256(str(path).encode("utf-8")).hexdigest()
@@ -87,6 +87,7 @@ class NsipsHandler(PatternMatchingEventHandler):
         return {
             "source_id": source_id,
             "detected_at": ts.isoformat(),
+            "body_sanitized": sanitize_body(body),
             "clinic_code_enc": encrypt_field(k, p.get("clinic_code")),
             "clinic_name_enc": encrypt_field(k, p.get("clinic_name")),
             "prescription_date_enc": encrypt_field(k, p.get("prescription_date")),
@@ -144,7 +145,7 @@ class NsipsHandler(PatternMatchingEventHandler):
             if self.stats_client is not None and self.crypto_key is not None:
                 try:
                     parsed = parse_nsips(body)
-                    payload = self._build_ingest_payload(path, ts, parsed)
+                    payload = self._build_ingest_payload(path, ts, parsed, body)
                     self.stats_client.post_ingest(payload)
                 except Exception:
                     append_all_log(

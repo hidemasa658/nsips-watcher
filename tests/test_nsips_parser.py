@@ -1,6 +1,25 @@
 from pathlib import Path
 
-from nsips_parser import parse_nsips
+from nsips_parser import parse_nsips, sanitize_body
+
+
+def test_sanitize_body_removes_record_1_lines():
+    body = "2,x,y\n1,タナベ,田辺 太郎\n4,drug\n"
+    result = sanitize_body(body)
+    assert "田辺" not in result
+    assert "1,タナベ" not in result
+    assert "2,x,y" in result
+    assert "4,drug" in result
+
+
+def test_sanitize_body_keeps_records_containing_1_in_middle():
+    body = "2,260819000294101,210\n"
+    result = sanitize_body(body)
+    assert "260819000294101" in result
+
+
+def test_sanitize_body_empty():
+    assert sanitize_body("") == ""
 
 
 FIXTURE = Path(__file__).parent / "fixtures" / "sample_nsips.txt"

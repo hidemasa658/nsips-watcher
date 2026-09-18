@@ -2,6 +2,16 @@
 from __future__ import annotations
 
 
+def sanitize_body(body: str) -> str:
+    """NSIPS 本文から record 1 (患者情報) 行を削除して返す。
+
+    行頭が "1," の行を除去する。それ以外は元のまま維持。VPS に生データを送る前の必須処理。
+    """
+    return "\n".join(
+        line for line in body.splitlines() if not line.lstrip().startswith("1,")
+    )
+
+
 def _col(fields: list[str], idx: int) -> str | None:
     """安全なフィールド取得。範囲外や空文字は None。"""
     if idx < 0 or idx >= len(fields):
