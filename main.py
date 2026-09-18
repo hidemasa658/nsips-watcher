@@ -108,6 +108,7 @@ class NsipsHandler(PatternMatchingEventHandler):
             ],
             "rps": parsed.get("rps", []),
             "drug_pricings": parsed.get("drug_pricings", []),
+            "totals": parsed.get("totals", {}),
             "fees": [
                 {
                     "fee_type": f.get("fee_type"),

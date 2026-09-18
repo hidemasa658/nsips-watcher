@@ -99,6 +99,7 @@ def parse_nsips(body: str) -> dict:
         "fees": [],
         "rps": [],
         "drug_pricings": [],  # record 6 基本料 (調剤料+薬剤料単価×数量=合計)
+        "totals": {},          # record 5 全体集計 (請求点数、患者負担金 等)
     }
     rps_by_no: dict[str, dict] = {}
 
@@ -112,7 +113,21 @@ def parse_nsips(body: str) -> dict:
         if rec == "1":
             continue  # 患者情報破棄
 
-        if rec == "2":
+        if rec == "5":
+            # record 5: 全体集計。
+            # [5] 請求点数、[7] 調剤基本料、[8] 夜間・休日等加算、
+            # [9] 薬学管理料、[11] 長期処方加算 (28日以上=60点 / 27日以下=10点)、
+            # [13] 患者負担金 (3割等)
+            result["totals"] = {
+                "total_points": _to_int(_col(fields, 5)),
+                "dispensing_base_fee": _to_int(_col(fields, 7)),
+                "night_holiday_fee": _to_int(_col(fields, 8)),
+                "management_fee": _to_int(_col(fields, 9)),
+                "long_prescription_fee": _to_int(_col(fields, 11)),
+                "patient_copay": _to_int(_col(fields, 13)),
+            }
+
+        elif rec == "2":
             result["prescription"] = {
                 "prescription_date": _col(fields, 4),
                 "clinic_code": _col(fields, 12),

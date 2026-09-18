@@ -155,7 +155,7 @@ def _load() -> str:
 
 def test_parse_returns_dict_with_expected_keys():
     result = parse_nsips(_load())
-    assert set(result.keys()) == {"prescription", "drugs", "fees", "rps", "drug_pricings"}
+    assert set(result.keys()) == {"prescription", "drugs", "fees", "rps", "drug_pricings", "totals"}
 
 
 def test_parse_extracts_prescription_from_record_2():
@@ -225,8 +225,21 @@ def test_parse_defensive_short_line():
 def test_parse_empty_input():
     result = parse_nsips("")
     assert result == {
-        "prescription": {}, "drugs": [], "fees": [], "rps": [], "drug_pricings": [],
+        "prescription": {}, "drugs": [], "fees": [], "rps": [], "drug_pricings": [], "totals": {},
     }
+
+
+def test_parse_extracts_totals_from_record_5():
+    """record 5 の全体集計 (請求点数、患者負担金 等) を抽出。"""
+    body = "5,84,24,119,0,329,0,62,40,59,0,60,329,990,0,0,0,990,990,990,0,0,0\n"
+    result = parse_nsips(body)
+    t = result["totals"]
+    assert t["total_points"] == 329
+    assert t["dispensing_base_fee"] == 62
+    assert t["night_holiday_fee"] == 40
+    assert t["management_fee"] == 59
+    assert t["long_prescription_fee"] == 60
+    assert t["patient_copay"] == 990
 
 
 def test_parse_extracts_drug_pricing_from_record_6():
