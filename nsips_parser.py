@@ -97,6 +97,7 @@ def parse_nsips(body: str) -> dict:
         "drugs": [],
         "fees": [],
         "rps": [],
+        "drug_pricings": [],  # record 6 基本料 (調剤料+薬剤料単価×数量=合計)
     }
     rps_by_no: dict[str, dict] = {}
 
@@ -165,11 +166,13 @@ def parse_nsips(body: str) -> dict:
             )
 
         elif rec == "6":
-            # record 6: 調剤料内訳/加算料。
-            # 通常内訳は code/name 無し。加算 (計量混合加算等) の場合 code[8], name[9]
+            # record 6 は 2 バリアント:
+            # (a) 加算料: [8]=コード, [9]=名 (例: 計量混合加算)
+            # (b) 基本料: [2]=調剤料, [3]=薬剤料単価, [4]=数量, [5]=合計 (剤ごとに1行)
             code = _col(fields, 8)
             name = _col(fields, 9)
             if code or name:
+                # (a) 加算料
                 result["fees"].append(
                     {
                         "fee_type": rec,
@@ -179,7 +182,17 @@ def parse_nsips(body: str) -> dict:
                         "points": _to_int(_col(fields, 6)),
                     }
                 )
-            # code/name 無しは調剤料内訳、skip
+            else:
+                # (b) 基本料 (剤ごと)
+                result["drug_pricings"].append(
+                    {
+                        "seq": _col(fields, 1),
+                        "dispensing_fee": _to_int(_col(fields, 2)),
+                        "drug_fee_per_unit": _to_int(_col(fields, 3)),
+                        "quantity": _to_int(_col(fields, 4)),
+                        "total": _to_int(_col(fields, 5)),
+                    }
+                )
 
     # is_mixed は site_text == "混合" のみで判定 (drug_count >= 2 は誤検出 = 内服の複数剤)
     for rp in rps_by_no.values():

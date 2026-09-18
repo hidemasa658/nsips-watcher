@@ -138,7 +138,7 @@ def _load() -> str:
 
 def test_parse_returns_dict_with_expected_keys():
     result = parse_nsips(_load())
-    assert set(result.keys()) == {"prescription", "drugs", "fees", "rps"}
+    assert set(result.keys()) == {"prescription", "drugs", "fees", "rps", "drug_pricings"}
 
 
 def test_parse_extracts_prescription_from_record_2():
@@ -206,4 +206,32 @@ def test_parse_defensive_short_line():
 
 def test_parse_empty_input():
     result = parse_nsips("")
-    assert result == {"prescription": {}, "drugs": [], "fees": [], "rps": []}
+    assert result == {
+        "prescription": {}, "drugs": [], "fees": [], "rps": [], "drug_pricings": [],
+    }
+
+
+def test_parse_extracts_drug_pricing_from_record_6():
+    """record 6 の 基本料バリアント (code/name なし) を drug_pricings に格納。
+    24 + 3*28 = 108 の検証。
+    """
+    body = "6,1,24,3,28,108,0,108,,,,,,,,,,,,,,,,,,,,,60\n"
+    result = parse_nsips(body)
+    assert len(result["drug_pricings"]) == 1
+    dp = result["drug_pricings"][0]
+    assert dp["dispensing_fee"] == 24
+    assert dp["drug_fee_per_unit"] == 3
+    assert dp["quantity"] == 28
+    assert dp["total"] == 108
+    # fees は空 (加算料ではない)
+    assert result["fees"] == []
+
+
+def test_parse_record_6_external_beyond_3rd_has_zero_dispensing():
+    """外用 4 剤目以降は 調剤料=0 (実データ通り記録するだけ)"""
+    body = "6,5,0,32,1,32,0,32,,,,,,,,,,,,,,,,,,,,,0\n"
+    result = parse_nsips(body)
+    dp = result["drug_pricings"][0]
+    assert dp["dispensing_fee"] == 0
+    assert dp["drug_fee_per_unit"] == 32
+    assert dp["total"] == 32
