@@ -163,10 +163,8 @@ def parse_nsips(body: str) -> dict:
                 }
             )
 
-    # RP を drug_count >= 2 でも 混合フラグ立てる
+    # is_mixed は site_text == "混合" のみで判定 (drug_count >= 2 は誤検出 = 内服の複数剤)
     for rp in rps_by_no.values():
-        if rp["drug_count"] >= 2:
-            rp["is_mixed"] = True
         result["rps"].append(rp)
 
     return result

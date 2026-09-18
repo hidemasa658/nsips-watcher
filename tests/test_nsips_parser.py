@@ -89,19 +89,25 @@ def test_parse_extracts_rps_from_record_3():
     assert rp["is_mixed"] is False
 
 
-def test_parse_detects_mixed_rp_by_drug_count():
-    """RP に record 4 が 2 個以上あれば混合として扱う。"""
-    body = (
+def test_parse_detects_mixed_rp_by_site_text_only():
+    """is_mixed は record 3 field 5 == "混合" のときのみ。drug_count>=2 では判定しない。"""
+    # Case 1: "混合" テキスト あり → is_mixed=True
+    body_mixed = (
         "3,4,7914,1日2回塗布,477,混合,522,体幹四肢,4,3,0,0,,2,0,0,,,,,,\n"
         "4,1,4,1,2646701M2202,x,x,x,ベタメタゾン軟膏,x,0,0,0,0,0,0,50,1,ｇ,0,0,0,0,1,8\n"
         "4,2,4,1,3339950M1153,x,x,x,ヘパリン油性クリーム,x,0,0,0,0,0,0,50,1,ｇ,0,0,0,0,1,6.3\n"
     )
-    result = parse_nsips(body)
-    rp = result["rps"][0]
-    assert rp["rp_no"] == "4"
-    assert rp["drug_count"] == 2
-    assert rp["is_mixed"] is True
-    assert rp["site_text"] == "混合"
+    result = parse_nsips(body_mixed)
+    assert result["rps"][0]["is_mixed"] is True
+
+    # Case 2: 内服の複数剤で "混合" 無し → is_mixed=False
+    body_not_mixed = (
+        "3,1,244,分3 毎食後,,,,,2,1,7,3,,1,0,0,,,,,,\n"
+        "4,1,1,1,6152004F2089,x,x,x,ビブラマイシン錠,x,0,0,0,0,0,0,1,1,錠,0,0,0,0,1,22\n"
+        "4,2,1,1,2316004F1020,x,x,x,ビオフェルミンR錠,x,0,0,0,0,0,0,1,1,錠,0,0,0,0,1,21\n"
+    )
+    result = parse_nsips(body_not_mixed)
+    assert result["rps"][0]["is_mixed"] is False
 
 
 def test_sanitize_body_removes_record_1_lines():
