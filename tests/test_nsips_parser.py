@@ -229,6 +229,27 @@ def test_parse_empty_input():
     }
 
 
+def test_parse_calculates_internal_total_quantity():
+    """内服総量 = 1回量 × 回数/日 × 日数 (record 3 と結合)"""
+    body = (
+        "3,1,244,分3 毎食後,,,,,2,1,7,3,,1,0,0,,,,,,\n"           # 7日 × 3回/日
+        "4,1,1,1,6152004F2089,x,x,x,ビブラマイシン錠,x,0,0,0,0,0,0,1,1,錠,0,0,0,0,1,22\n"  # 1回1錠
+    )
+    result = parse_nsips(body)
+    d = result["drugs"][0]
+    assert d["quantity"] == 1.0  # 1回量
+    assert d["total_quantity"] == 21.0  # 1 * 3 * 7 = 21 錠
+
+
+def test_parse_external_total_quantity_equals_quantity():
+    """外用は quantity (position 16) がそのまま総量"""
+    body = "4,1,4,1,2646730M1059,x,x,x,アンテベート軟膏,x,0,0,0,0,0,0,30,1,ｇ,0,0,0,0,1,18.9\n"
+    result = parse_nsips(body)
+    d = result["drugs"][0]
+    assert d["quantity"] == 30.0
+    assert d["total_quantity"] == 30.0
+
+
 def test_parse_extracts_totals_from_record_5():
     """record 5 の全体集計 (請求点数、患者負担金 等) を抽出。"""
     body = "5,84,24,119,0,329,0,62,40,59,0,60,329,990,0,0,0,990,990,990,0,0,0\n"

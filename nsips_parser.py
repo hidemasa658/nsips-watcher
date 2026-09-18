@@ -140,13 +140,17 @@ def parse_nsips(body: str) -> dict:
             usage_code = _col(fields, 2)
             usage_text = _col(fields, 3)
             site_text = _col(fields, 5)  # 「混合」等
+            days = _to_int(_col(fields, 10))          # 日数
+            times_per_day = _to_int(_col(fields, 11))  # 1日の回数
             is_mixed_marker = site_text == "混合"
             rps_by_no[rp_no or ""] = {
                 "rp_no": rp_no,
                 "usage_code": usage_code,
                 "usage_text": usage_text,
                 "site_text": site_text,
-                "is_mixed": is_mixed_marker,  # あとで drug 数でも更新
+                "days": days,
+                "times_per_day": times_per_day,
+                "is_mixed": is_mixed_marker,
                 "drug_count": 0,
             }
 
@@ -214,5 +218,21 @@ def parse_nsips(body: str) -> dict:
     # is_mixed は site_text == "混合" のみで判定 (drug_count >= 2 は誤検出 = 内服の複数剤)
     for rp in rps_by_no.values():
         result["rps"].append(rp)
+
+    # 内服の総数量 = 1回量 × 回数/日 × 日数
+    # 外用は quantity (position 16) が既に総処方量なのでそのまま
+    for d in result["drugs"]:
+        if d.get("form") == "内服":
+            rp = rps_by_no.get(d.get("rp_no") or "")
+            if rp and rp.get("times_per_day") and rp.get("days"):
+                try:
+                    d["total_quantity"] = float(d["quantity"]) * rp["times_per_day"] * rp["days"]
+                except (TypeError, ValueError):
+                    d["total_quantity"] = None
+            else:
+                d["total_quantity"] = None
+        else:
+            # 外用/その他: quantity がそのまま総量
+            d["total_quantity"] = d.get("quantity")
 
     return result
