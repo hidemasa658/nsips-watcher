@@ -140,6 +140,8 @@ def main() -> None:
             self.cfg_path = config_path()
 
             self._build_ui()
+            self._start_or_prompt()
+            self._poll_queue()
 
         def _build_ui(self) -> None:
             self.root.title("nsips-watcher")
@@ -190,10 +192,94 @@ def main() -> None:
                 # macOS 等での開発時
                 pass
 
+        def _prompt_base_dir(self) -> Path | None:
+            """フォルダ選択ダイアログを出す。キャンセルで None。"""
+            chosen = filedialog.askdirectory(
+                title="監視対象フォルダを選択",
+                parent=self.root,
+            )
+            if not chosen:
+                return None
+            p = Path(chosen)
+            if not p.is_dir():
+                messagebox.showinfo(
+                    "フォルダが無効",
+                    f"{p} は有効なフォルダではありません。",
+                    parent=self.root,
+                )
+                return None
+            return p
+
+        def _start_or_prompt(self) -> None:
+            """起動時: config → default → ダイアログ の順で有効な base_dir を得て監視開始。"""
+            base = resolve_base_dir(self.cfg_path, DEFAULT_BASE_DIR)
+            while base is None:
+                chosen = self._prompt_base_dir()
+                if chosen is None:
+                    self._show_body(
+                        "info", None, None,
+                        "監視パスが設定されていません。\n\n"
+                        "メニューから「監視パスを変更」を選んでください。",
+                    )
+                    return
+                base = chosen
+
+            cfg = load_config(self.cfg_path)
+            cfg["base_dir"] = str(base)
+            save_config(self.cfg_path, cfg)
+
+            self._start_observer(base)
+
+        def _start_observer(self, base: Path) -> None:
+            try:
+                self.existing = set()
+                self.existing.update(
+                    p.resolve()
+                    for p in base.iterdir()
+                    if p.is_file() and p.suffix.lower() == ".txt"
+                )
+                self.handler = NsipsHandler(
+                    self.log_dir, base, self.existing, self.event_queue
+                )
+                observer = Observer()
+                observer.schedule(self.handler, str(base), recursive=False)
+                observer.start()
+                self.observer = observer
+                self.base_dir = base
+                self.status_var.set(f"監視中: {base}")
+                self._show_body(
+                    "info", None, None,
+                    f"監視待機中... ({base})",
+                )
+            except Exception as e:
+                self.status_var.set("監視エラー")
+                self._show_body(
+                    "info", None, None,
+                    f"監視開始に失敗しました: {e}\n\n"
+                    "メニューから「監視パスを変更」で別のパスを選んでください。",
+                )
+
+        def _stop_observer(self) -> None:
+            if self.observer is not None:
+                self.observer.stop()
+                self.observer.join(timeout=5)
+                self.observer = None
+                self.handler = None
+
+        def _poll_queue(self) -> None:
+            try:
+                while True:
+                    kind, ts, path, body = self.event_queue.get_nowait()
+                    self._show_body(kind, ts, path, body)
+            except queue.Empty:
+                pass
+            self.root.after(200, self._poll_queue)
+
         def change_base_dir(self) -> None:
             pass  # Task 7 で実装
 
         def quit_app(self) -> None:
+            self._stop_observer()
             self.root.destroy()
 
     root = tk.Tk()
