@@ -114,3 +114,92 @@ class NsipsHandler(PatternMatchingEventHandler):
         dest = getattr(event, "dest_path", None)
         if dest and str(dest).lower().endswith(".txt"):
             self._process(str(dest))
+
+
+def main() -> None:
+    """tkinter とその周辺は lazy import (macOS pyenv で _tkinter 未導入でも import main が壊れないため)。"""
+    import os
+    import queue
+    import tkinter as tk
+    from tkinter import filedialog, messagebox, scrolledtext
+
+    from core import save_config
+    from watchdog.observers import Observer
+
+    class NsipsWatcherApp:
+        def __init__(self, root: tk.Tk) -> None:
+            self.root = root
+            self.event_queue: queue.Queue = queue.Queue()
+            self.observer: Observer | None = None
+            self.handler: NsipsHandler | None = None
+            self.existing: set[Path] = set()
+            self.base_dir: Path | None = None
+
+            self.log_dir = app_dir() / "logs"
+            self.log_dir.mkdir(parents=True, exist_ok=True)
+            self.cfg_path = config_path()
+
+            self._build_ui()
+
+        def _build_ui(self) -> None:
+            self.root.title("nsips-watcher")
+            self.root.geometry("800x600")
+
+            menubar = tk.Menu(self.root)
+            filemenu = tk.Menu(menubar, tearoff=0)
+            filemenu.add_command(label="監視パスを変更(P)", command=self.change_base_dir)
+            filemenu.add_command(label="ログフォルダを開く(L)", command=self.open_log_folder)
+            filemenu.add_separator()
+            filemenu.add_command(label="終了(X)", command=self.quit_app)
+            menubar.add_cascade(label="ファイル(F)", menu=filemenu)
+            self.root.config(menu=menubar)
+
+            self.status_var = tk.StringVar(value="監視中: (未設定)")
+            status = tk.Label(self.root, textvariable=self.status_var, anchor="w")
+            status.pack(fill="x", padx=8, pady=4)
+
+            self.text = scrolledtext.ScrolledText(
+                self.root,
+                wrap="word",
+                font=("Consolas", 11),
+                state="normal",
+            )
+            self.text.pack(fill="both", expand=True, padx=8, pady=(0, 8))
+            self._show_body("info", None, None, "監視待機中...")
+            self.text.config(state="disabled")
+
+            self.root.protocol("WM_DELETE_WINDOW", self.quit_app)
+
+        def _show_body(self, kind: str, ts, path, body: str) -> None:
+            self.text.config(state="normal")
+            self.text.delete("1.0", "end")
+            if kind == "ok":
+                header = f"# {ts:%Y-%m-%d %H:%M:%S} {path}\n\n"
+                self.text.insert("end", header + body)
+            elif kind == "error":
+                header = f"# ERROR {ts:%Y-%m-%d %H:%M:%S} {path}\n\n"
+                self.text.insert("end", header + body)
+            else:
+                self.text.insert("end", body)
+            self.text.config(state="disabled")
+
+        def open_log_folder(self) -> None:
+            try:
+                os.startfile(str(self.log_dir))
+            except AttributeError:
+                # macOS 等での開発時
+                pass
+
+        def change_base_dir(self) -> None:
+            pass  # Task 7 で実装
+
+        def quit_app(self) -> None:
+            self.root.destroy()
+
+    root = tk.Tk()
+    NsipsWatcherApp(root)
+    root.mainloop()
+
+
+if __name__ == "__main__":
+    main()
