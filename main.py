@@ -104,8 +104,10 @@ class NsipsHandler(PatternMatchingEventHandler):
             "fees": [
                 {
                     "fee_type": f.get("fee_type"),
-                    "code_enc": encrypt_field(k, f.get("code")),
-                    "name_enc": encrypt_field(k, f.get("name")),
+                    "code": f.get("code"),          # 平文 (加算集計用)
+                    "name": f.get("name"),          # 平文 (加算集計用)
+                    "code_enc": encrypt_field(k, f.get("code")),  # 互換のため残す
+                    "name_enc": encrypt_field(k, f.get("name")),  # 互換のため残す
                     "count": f.get("count"),
                     "points": f.get("points"),
                     "is_mix_flag": "計量混合" in (f.get("name") or ""),
