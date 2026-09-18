@@ -62,7 +62,8 @@ def test_parse_extracts_ointment_quantity_from_position_16():
     assert d["unit"] == "ｇ"
 
 
-def test_parse_extracts_tablet_quantity_from_position_24():
+def test_parse_extracts_tablet_quantity_and_unit_price():
+    """内服錠: position 16 = 1回量、position 24 = 薬価。"""
     body = (
         "4,1,1,1,6152004F2089,620006084,,7315,ビブラマイシン錠100mg,ドキシサイクリン,"
         "0,0,0,0,0,0,1,1,錠,0,0,0,0,1,22,,,,,,,0,0,,,0,,,,,,0\n"
@@ -70,8 +71,24 @@ def test_parse_extracts_tablet_quantity_from_position_24():
     result = parse_nsips(body)
     d = result["drugs"][0]
     assert d["form"] == "内服"
-    assert d["quantity"] == 22.0  # 内服は position 24 (22 錠 総数)
+    assert d["quantity"] == 1.0  # 1回量
+    assert d["unit_price"] == 22.0  # 薬価 22円/錠
     assert d["unit"] == "錠"
+
+
+def test_parse_extracts_ointment_unit_price():
+    """外用軟膏: position 16 = 総処方量、position 24 = 薬価。
+    例: テラ・コートリル軟膏 10g 処方、薬価 25.1円/g
+    """
+    body = (
+        "4,1,4,1,2647705M1023,662640163,,15007,テラ・コートリル軟膏,オキシテトラサイクリン,"
+        "0,0,0,0,0,0,10,1,ｇ,0,0,0,0,1,25.1\n"
+    )
+    result = parse_nsips(body)
+    d = result["drugs"][0]
+    assert d["form"] == "外用"
+    assert d["quantity"] == 10.0  # 10g 処方
+    assert d["unit_price"] == 25.1  # 薬価 25.1円/g
 
 
 def test_parse_extracts_rps_from_record_3():
@@ -164,7 +181,8 @@ def test_parse_extracts_all_record_4_drugs():
     assert d0["rp_no"] == "1"
     assert d0["yj_code"] == "6152004F2089"
     assert d0["name"] == "ビブラマイシン錠100mg"
-    assert d0["quantity"] == 22.0
+    assert d0["quantity"] == 1.0  # 1回量
+    assert d0["unit_price"] == 22.0  # 薬価
     assert d0["unit"] == "錠"
     assert drugs[2]["yj_code"] == "2655709N1096"
     assert drugs[2]["unit"] == "g"

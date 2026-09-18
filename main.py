@@ -99,6 +99,7 @@ class NsipsHandler(PatternMatchingEventHandler):
                     "yj_code": d.get("yj_code"),
                     "name": d.get("name"),
                     "quantity": d.get("quantity"),
+                    "unit_price": d.get("unit_price"),
                     "unit": d.get("unit"),
                     "form": d.get("form"),
                     "dosage_form_code": d.get("dosage_form_code"),

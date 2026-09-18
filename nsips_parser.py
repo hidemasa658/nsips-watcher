@@ -60,16 +60,17 @@ def _to_int(v: str | None) -> int | None:
 
 def _extract_quantity(fields: list[str], form: str) -> float | None:
     """
-    処方量を form 依存で抽出:
-    - 外用: position 16 = 総処方量 (30g 等)
-    - 内服: position 24 = 総処方量 (22 錠 等) を優先、無ければ 16
+    処方量 (position 16):
+    - 外用: 総処方量 (例: 軟膏 30g)
+    - 内服: 1回量 (例: 錠 1錠) — 総数量は record 3 の 回数×日数 と併せて算出必要
+    - その他: position 16
     """
-    pos_16 = _to_float(_col(fields, 16))
-    pos_24 = _to_float(_col(fields, 24))
-    if form == "外用":
-        return pos_16
-    # 内服 / その他
-    return pos_24 if pos_24 is not None else pos_16
+    return _to_float(_col(fields, 16))
+
+
+def _extract_unit_price(fields: list[str]) -> float | None:
+    """薬価 (position 24、円/単位)。例: ヘパリン軟膏 6.3円/g、ビブラマイシン錠 22.1円/錠"""
+    return _to_float(_col(fields, 24))
 
 
 def parse_nsips(body: str) -> dict:
@@ -144,6 +145,7 @@ def parse_nsips(body: str) -> dict:
                     "yj_code": yj_code,
                     "name": _col(fields, 8),
                     "quantity": _extract_quantity(fields, form),
+                    "unit_price": _extract_unit_price(fields),  # 薬価 円/単位
                     "unit": _col(fields, 18),
                     "form": form,
                     "dosage_form_code": get_dosage_form_code(yj_code),
