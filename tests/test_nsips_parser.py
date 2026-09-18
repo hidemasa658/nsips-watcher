@@ -29,11 +29,11 @@ def test_classify_form_external_patch():
 
 
 def test_classify_form_internal_tablet():
-    assert classify_form("6152004F2089") == "内服"  # F = 錠
+    assert classify_form("6152004F2089") == "内用"  # 5-7桁=004 → 内用
 
 
 def test_classify_form_internal_syrup():
-    assert classify_form("6135001R2110") == "内服"  # R = 咀嚼/散/顆粒等 内服
+    assert classify_form("6135001R2110") == "内用"  # 5-7桁=001 → 内用
 
 
 def test_classify_form_short_yj_returns_other():
@@ -70,7 +70,7 @@ def test_parse_extracts_tablet_quantity_and_unit_price():
     )
     result = parse_nsips(body)
     d = result["drugs"][0]
-    assert d["form"] == "内服"
+    assert d["form"] == "内用"
     assert d["quantity"] == 1.0  # 1回量
     assert d["unit_price"] == 22.0  # 薬価 22円/錠
     assert d["unit"] == "錠"
