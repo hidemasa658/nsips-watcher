@@ -1,6 +1,7 @@
 """nsips-watcher エントリポイント。solamichi クライアントの NSIPS/OK 出力を監視する。"""
 from __future__ import annotations
 
+import hashlib
 import sys
 import threading
 import traceback
@@ -17,6 +18,8 @@ from core import (
     wait_for_stable_size,
     wait_for_unlock,
 )
+from nsips_crypto import encrypt_field
+from nsips_parser import parse_nsips
 
 DEFAULT_BASE_DIR = Path(r"C:\solamichi\solamichiclient\client\LOG\NSIPS\OK")
 
@@ -59,6 +62,8 @@ class NsipsHandler(PatternMatchingEventHandler):
         base_dir: Path,
         existing: set[Path],
         event_queue,
+        stats_client=None,
+        crypto_key: bytes | None = None,
     ) -> None:
         super().__init__(
             patterns=self.patterns,
@@ -71,6 +76,43 @@ class NsipsHandler(PatternMatchingEventHandler):
         self.existing = existing
         self.queue = event_queue
         self._lock = threading.Lock()
+        self.stats_client = stats_client
+        self.crypto_key = crypto_key
+
+    def _build_ingest_payload(self, path: Path, ts: datetime, parsed: dict) -> dict:
+        k = self.crypto_key
+        p = parsed["prescription"]
+        source_id = hashlib.sha256(str(path).encode("utf-8")).hexdigest()
+
+        return {
+            "source_id": source_id,
+            "detected_at": ts.isoformat(),
+            "clinic_code_enc": encrypt_field(k, p.get("clinic_code")),
+            "clinic_name_enc": encrypt_field(k, p.get("clinic_name")),
+            "prescription_date_enc": encrypt_field(k, p.get("prescription_date")),
+            "doctor_name_enc": encrypt_field(k, p.get("doctor_name")),
+            "drugs": [
+                {
+                    "rp_no_enc": encrypt_field(k, d.get("rp_no")),
+                    "yj_code": d.get("yj_code"),
+                    "name": d.get("name"),
+                    "quantity": d.get("quantity"),
+                    "unit": d.get("unit"),
+                }
+                for d in parsed["drugs"]
+            ],
+            "fees": [
+                {
+                    "fee_type": f.get("fee_type"),
+                    "code_enc": encrypt_field(k, f.get("code")),
+                    "name_enc": encrypt_field(k, f.get("name")),
+                    "count": f.get("count"),
+                    "points": f.get("points"),
+                    "is_mix_flag": "計量混合" in (f.get("name") or ""),
+                }
+                for f in parsed["fees"]
+            ],
+        }
 
     def _process(self, src_path: str) -> None:
         try:
@@ -95,6 +137,19 @@ class NsipsHandler(PatternMatchingEventHandler):
             body = decode_auto(path.read_bytes())
             append_all_log(self.all_log, ts, path, body)
             copy_backup(path, self.log_dir, "OK", ts)
+
+            # ---- Stats 送信 ----
+            if self.stats_client is not None and self.crypto_key is not None:
+                try:
+                    parsed = parse_nsips(body)
+                    payload = self._build_ingest_payload(path, ts, parsed)
+                    self.stats_client.post_ingest(payload)
+                except Exception:
+                    append_all_log(
+                        self.all_log, datetime.now(), path,
+                        f"[STATS ERROR] {traceback.format_exc()}",
+                    )
+
             self.queue.put(("ok", ts, path, body))
         except Exception:
             try:
