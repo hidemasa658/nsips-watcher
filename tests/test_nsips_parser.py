@@ -179,6 +179,25 @@ def test_parse_extracts_record_7_fees():
     assert "999999999" in codes
 
 
+def test_parse_extracts_record_6_fee_with_code_name():
+    """record 6 でも code/name (position 8/9) が入っている行は fee 記録する。"""
+    body = "6,2,10,63,1,73,80,153,430003670,計量混合加算　軟・硬膏剤,,,,,,,,,,,,,,,,,,,0\n"
+    result = parse_nsips(body)
+    assert len(result["fees"]) == 1
+    fee = result["fees"][0]
+    assert fee["fee_type"] == "6"
+    assert fee["code"] == "430003670"
+    assert "計量混合加算" in fee["name"]
+    assert fee["points"] == 80
+
+
+def test_parse_skips_record_6_without_code_name():
+    """record 6 で code/name 無しは 調剤料内訳、skip。"""
+    body = "6,1,10,19,1,29,0,29,,,,,,,,,,,,,,10\n"
+    result = parse_nsips(body)
+    assert result["fees"] == []
+
+
 def test_parse_defensive_short_line():
     txt = "4,1\n"
     result = parse_nsips(txt)
