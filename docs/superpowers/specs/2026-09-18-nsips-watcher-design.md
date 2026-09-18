@@ -29,9 +29,9 @@ solamichi クラウド薬歴クライアントが Windows 上で `C:\solamichi\s
    - PyInstaller ビルド版: `sys.executable` の親ディレクトリ配下
    - 開発時: `main.py` の親ディレクトリ配下
 3. `config.json` を読み、監視ベースディレクトリ (base_dir) を決定:
-   - `config.json` の `base_dir` が有効ならそれを使う (存在チェックのみ、SIPS のようなサブフォルダ判定は不要)
-   - なければデフォルト `C:\solamichi\solamichiclient\client\LOG\NSIPS\OK\` を試す
-   - どちらも見つからなければ tkinter フォルダ選択ダイアログを表示、有効パスまでループ
+   - `config.json` の `base_dir` を検証: 空文字列でなく、`Path(...).is_dir()` が True ならそれを使う (sips-watcher と違い、サブフォルダ判定は不要 — 単に「監視するフォルダそのもの」が存在すればよい)
+   - なければデフォルト `C:\solamichi\solamichiclient\client\LOG\NSIPS\OK\` を同じ基準で試す
+   - どちらも見つからなければ tkinter フォルダ選択ダイアログを表示、`is_dir()` が True になるまでループ
    - キャンセル → アプリ終了
 4. base_dir 直下の既存 `.txt` の絶対パスを set (`existing_files`) に登録
 5. watchdog `Observer` を起動、base_dir を `recursive=False` で監視
@@ -59,9 +59,10 @@ solamichi クラウド薬歴クライアントが Windows 上で `C:\solamichi\s
 
 ### 3.3 エラー処理
 
-- ロック解放タイムアウト / サイズ不安定: `all.log` に `[ERROR]` 記録、queue にも `("error", timestamp, path, "エラー内容")` を put して GUI に表示
-- Handler 内の予期しない例外: try/except で握って `all.log` に traceback 記録、Observer は継続
-- Queue が空: 次のポーリング周期を待つ
+- **ロック解放タイムアウト / サイズ不安定**: `all.log` に `[ERROR]` 記録、queue にも `("error", timestamp, path, "エラー内容")` を put して GUI に表示
+- **Handler 内の予期しない例外**: try/except で握って `all.log` に traceback 記録、Observer は継続
+- **Queue が空**: 次のポーリング周期を待つ
+- **Observer 起動失敗** (`observer.start()` が例外を出す、schedule に失敗する): 例外を catch、Text ウィジェットに `監視開始に失敗しました: <例外内容>\n\nメニューから「監視パスを変更」で別のパスを選んでください。` を表示。Observer は None のまま、GUI は生存 (ユーザーがパスを選び直せる)
 
 ### 3.4 GUI レイアウト
 
@@ -69,9 +70,14 @@ solamichi クラウド薬歴クライアントが Windows 上で `C:\solamichi\s
 - サイズ: 初期 800×600、リサイズ可
 - メニューバー:
   - `ファイル(F)`:
-    - `監視パスを変更(P)`: フォルダ選択ダイアログ → 有効なら Observer 再起動 & config.json 更新
+    - `監視パスを変更(P)`: フォルダ選択ダイアログ → 有効 (`is_dir()` True) なら以下の順で Observer を再構成:
+      1. 旧 Observer を `stop() → join(timeout=5)`
+      2. 新 base_dir 直下の既存 `.txt` を再スナップショット (`existing_files` を空にしてから登録)
+      3. 新 `NsipsHandler` を作成、新 Observer を起動
+      4. `config.json` を更新
+      5. 上部ラベル `監視中: <base_dir>` を新 base_dir で更新
     - `ログフォルダを開く(L)`: `os.startfile(LOG_DIR)`
-    - `終了(X)`: Observer.stop() → root.destroy()
+    - `終了(X)`: Observer.stop() → join(timeout=5) → root.destroy()
 - 上部ラベル: `監視中: <base_dir>` (base_dir 変更時に更新)
 - 中央: `ScrolledText` (read-only、フォント等幅、大サイズ)
   - 初期状態: 「監視待機中...」
