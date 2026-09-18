@@ -24,7 +24,9 @@ nsips-watcher が検知した NSIPS .txt の内容をパースし、個人情報
   - Nginx リバースプロキシで `https://kumatool.duckdns.org/nsips-stats/` にマップ
 - 参考: https://github.com/araitatsuya-code/nsips-validator (MIT License)
 - 暗号化: AES-256-GCM (Python `cryptography` の Fernet)
-- 認証: Bearer token (単一薬局運用、共有 secret)
+- 認証: **mTLS (相互 TLS)** + Bearer token の二段階
+  - 薬局 PC が動的 IP のため IP allowlist は不採用、代わりに クライアント証明書検証
+  - Bearer token はコード漏洩対策 (証明書とセットで盗まれない限り無効)
 
 ## 3. データフロー
 
@@ -115,7 +117,47 @@ nsips-watcher が検知した NSIPS .txt の内容をパースし、個人情報
 | count | record 6/7 | **平文** | 集計対象 |
 | points | record 6/7 | **平文** | 集計対象 |
 
-### 4.4 「計量混合加算」の判定
+### 4.4 mTLS 設定
+
+**証明書構成**:
+- **プライベート CA** (`ca.key` + `ca.crt`, 有効期限 10 年): 開発者のローカルで生成、`ca.crt` のみ VPS 配布 (`/etc/nginx/certs/nsips-ca.crt`)
+- **サーバー証明書**: kumatool.duckdns.org は既存の Let's Encrypt を継続使用 (別 CA)
+- **クライアント証明書** (`client-<PC名>.crt` + `client-<PC名>.key`, 有効期限 5 年): **PC ごとに 1 発行**、USB 手渡しで配布
+
+**発行スクリプト** (`nsips-stats-api/deploy/gen_certs.sh`):
+```bash
+# 初回: CA 生成
+./gen_certs.sh init-ca
+
+# PC ごと: クライアント証明書発行
+./gen_certs.sh client <pc-identifier>   # 例: ./gen_certs.sh client pharmacy-pc-01
+# → certs/client-pharmacy-pc-01.crt + certs/client-pharmacy-pc-01.key
+```
+
+**Nginx 設定**:
+既存 `kumatool.duckdns.org` の server ブロックに:
+```nginx
+ssl_client_certificate /etc/nginx/certs/nsips-ca.crt;
+ssl_verify_client optional;   # 他 location に影響しないため optional
+```
+
+`/nsips-stats/` の location 内で:
+```nginx
+if ($ssl_client_verify != SUCCESS) {
+    return 403 "client cert required";
+}
+```
+
+**クライアント (nsips-watcher)**:
+- `config.json` に `client_cert_path`, `client_key_path` を追加
+- `StatsClient.__init__` で `httpx.Client(cert=(cert_path, key_path))` を渡す
+
+**紛失/失効時**:
+- MVP では CRL (Certificate Revocation List) は組まない (YAGNI)
+- 代わりに CA を再発行 → 全 PC に新しい client 証明書を配布 (実質「全交換」)
+- 単一薬局・数 PC 前提のため運用負荷は小さい
+
+### 4.5 「計量混合加算」の判定
 
 暗号化された `fee_name` に対して VPS 側で `LIKE '%計量混合%'` はできない。以下で解決:
 
@@ -249,7 +291,11 @@ CREATE INDEX idx_fees_mix ON fees(is_mix_flag);
   - タブ 2-4 は起動時 / 検知時 / `<<NotebookTabChanged>>` で再 fetch
   - タブ 5 (エクスポート) はボタン: fetch → 復号 → CSV 保存
 - **`requirements.txt`**: `httpx==0.27.2`, `cryptography==43.0.1` を追加
-- **`config.json` に追記**: `"api_base_url": "https://kumatool.duckdns.org/nsips-stats"`, `"api_token": "..."`
+- **`config.json` に追記**: 
+  - `"api_base_url": "https://kumatool.duckdns.org/nsips-stats"`
+  - `"api_token": "..."`
+  - `"client_cert_path": "C:\\nsips-watcher\\client.crt"` (mTLS 用)
+  - `"client_key_path": "C:\\nsips-watcher\\client.key"` (mTLS 用)
 
 ### 6.3 初期セットアップ UI
 

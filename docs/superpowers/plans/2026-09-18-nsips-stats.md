@@ -4,7 +4,7 @@
 
 **Goal:** nsips-watcher で検知した .txt を「record 1 削除 + 部分暗号化」してさくら rag-server の FastAPI + SQLite に送信、GUI では VPS の集計 API を叩いて 4 種のタブで累計を表示する機能を追加する。
 
-**Architecture:** サーバー (`~/dev/nsips-stats-api` → rag-server デプロイ) と クライアント (`~/dev/nsips-watcher` 既存拡張) の 2 コンポーネント。サーバーは FastAPI + SQLite、認証は X-API-Token。クライアントは Fernet で選択フィールド暗号化 + httpx で POST/GET。テストは pytest (サーバー: TestClient, クライアント: httpx MockTransport)。
+**Architecture:** サーバー (`~/dev/nsips-stats-api` → rag-server デプロイ) と クライアント (`~/dev/nsips-watcher` 既存拡張) の 2 コンポーネント。サーバーは FastAPI + SQLite、認証は **mTLS (クライアント証明書検証) + X-API-Token** の二段階。クライアントは Fernet で選択フィールド暗号化 + httpx でクライアント証明書付き POST/GET。テストは pytest (サーバー: TestClient, クライアント: httpx MockTransport)。
 
 **Tech Stack:** Python 3.11, FastAPI 0.115, uvicorn 0.30, SQLite (stdlib), httpx 0.27, cryptography 43.0.1, watchdog 5.0.3, tkinter (stdlib), Nginx, systemd, PyInstaller
 
@@ -1258,6 +1258,121 @@ git commit -m "feat(api): GET /stats/export/prescriptions で全暗号 prescript
 
 ---
 
+## Task 9.5: mTLS 証明書発行スクリプト
+
+**Files:**
+- Create: `~/dev/nsips-stats-api/deploy/gen_certs.sh`
+- Create: `~/dev/nsips-stats-api/deploy/certs/README.md`
+
+- [ ] **Step 1: `deploy/gen_certs.sh` を作成**
+
+```bash
+#!/usr/bin/env bash
+# nsips-stats-api mTLS 証明書生成スクリプト
+# 使い方:
+#   ./gen_certs.sh init-ca                 # 初回のみ: CA 生成
+#   ./gen_certs.sh client <pc-identifier>  # PC ごとにクライアント証明書発行
+set -euo pipefail
+
+CERTS_DIR="$(dirname "$0")/certs"
+mkdir -p "$CERTS_DIR"
+cd "$CERTS_DIR"
+
+case "${1:-}" in
+  init-ca)
+    if [[ -f ca.key ]]; then
+      echo "CA already exists. Aborting."
+      exit 1
+    fi
+    openssl genrsa -out ca.key 4096
+    openssl req -x509 -new -nodes -key ca.key -sha256 -days 3650 \
+      -subj "/CN=nsips-stats-api CA" \
+      -out ca.crt
+    chmod 600 ca.key
+    echo "CA generated: ca.crt (デプロイ用) + ca.key (秘密、絶対公開しない)"
+    ;;
+  client)
+    NAME="${2:?client name required (e.g., pharmacy-pc-01)}"
+    if [[ ! -f ca.crt ]]; then
+      echo "CA not found. Run './gen_certs.sh init-ca' first."
+      exit 1
+    fi
+    openssl genrsa -out "client-${NAME}.key" 2048
+    openssl req -new -key "client-${NAME}.key" \
+      -subj "/CN=${NAME}" \
+      -out "client-${NAME}.csr"
+    openssl x509 -req -in "client-${NAME}.csr" \
+      -CA ca.crt -CAkey ca.key -CAcreateserial \
+      -out "client-${NAME}.crt" -days 1825 -sha256
+    rm "client-${NAME}.csr"
+    chmod 600 "client-${NAME}.key"
+    echo "Client cert generated:"
+    echo "  client-${NAME}.crt  (公開可: 対象 PC + サーバーは不要)"
+    echo "  client-${NAME}.key  (秘密: 対象 PC にのみ配置、USB 手渡し推奨)"
+    ;;
+  *)
+    echo "Usage: $0 {init-ca | client <pc-name>}"
+    exit 1
+    ;;
+esac
+```
+
+- [ ] **Step 2: 実行権限を付与**
+
+```bash
+chmod +x ~/dev/nsips-stats-api/deploy/gen_certs.sh
+```
+
+- [ ] **Step 3: `deploy/certs/README.md` を作成**
+
+```markdown
+# 証明書ディレクトリ
+
+このディレクトリは `.gitignore` されています。開発者ローカルでのみ管理。
+
+## 生成物
+
+- `ca.crt` — サーバー配布用 (VPS の `/etc/nginx/certs/nsips-ca.crt` へコピー)
+- `ca.key` — 発行者の秘密鍵 (**絶対公開しない**)
+- `client-<name>.crt` + `client-<name>.key` — 各薬局 PC 用 (USB 手渡し配布)
+- `ca.srl` — シリアル番号管理 (openssl 自動生成)
+
+## バックアップ
+
+`ca.key` を紛失すると新しい CA を作り直す必要があり、全 client 証明書を再発行する必要がある。1Password / パスワードマネージャ等に格納推奨。
+```
+
+- [ ] **Step 4: `.gitignore` に `deploy/certs/*.key`, `*.crt`, `*.srl`, `*.csr` を追加**
+
+`~/dev/nsips-stats-api/.gitignore` の末尾に:
+```
+deploy/certs/*.key
+deploy/certs/*.crt
+deploy/certs/*.srl
+deploy/certs/*.csr
+```
+
+(README.md は追跡する)
+
+- [ ] **Step 5: CA を初回生成 + テストクライアント発行**
+
+```bash
+cd ~/dev/nsips-stats-api
+./deploy/gen_certs.sh init-ca
+./deploy/gen_certs.sh client test-macos
+ls deploy/certs/
+# → ca.crt, ca.key, client-test-macos.crt, client-test-macos.key
+```
+
+- [ ] **Step 6: コミット (証明書ファイル自体は .gitignore で入らない)**
+
+```bash
+git add .gitignore deploy/gen_certs.sh deploy/certs/README.md
+git commit -m "chore: mTLS 証明書発行スクリプト (init-ca + client <name>)"
+```
+
+---
+
 ## Task 10: GitHub public リポジトリ作成 + push
 
 **Files:**
@@ -1335,12 +1450,38 @@ curl -H "X-API-Token: $(grep API_TOKEN .env | cut -d= -f2)" http://127.0.0.1:188
 # → {"status":"ok"}
 ```
 
+## mTLS 用 CA 証明書を配置
+
+開発者マシンで生成した `ca.crt` を rag-server にコピー:
+
+```bash
+# macOS 側で
+scp ~/dev/nsips-stats-api/deploy/certs/ca.crt rag-server:/etc/nginx/certs/nsips-ca.crt
+
+# rag-server 側で
+ls -la /etc/nginx/certs/nsips-ca.crt
+# 存在確認 (owner root, mode 644 で OK)
+```
+
 ## Nginx 追加
 
-既存の `kumatool.duckdns.org` 設定 (`/etc/nginx/conf.d/kumatool.conf` 等) に以下 location を追加:
+既存の `kumatool.duckdns.org` 設定 (`/etc/nginx/conf.d/kumatool.conf` 等) の **server ブロック内** に:
+
+```nginx
+# mTLS のための CA 指定 (optional にして他 location への影響を無くす)
+ssl_client_certificate /etc/nginx/certs/nsips-ca.crt;
+ssl_verify_client optional;
+```
+
+さらに location を追加:
 
 ```nginx
 location /nsips-stats/ {
+    # mTLS 検証: 有効な client cert 無しは 403
+    if ($ssl_client_verify != SUCCESS) {
+        return 403 "client cert required";
+    }
+
     proxy_pass http://127.0.0.1:18821/;
     proxy_set_header X-API-Token $http_x_api_token;
     proxy_set_header Host $host;
@@ -1354,9 +1495,19 @@ location /nsips-stats/ {
 nginx -t && systemctl reload nginx
 ```
 
-外部から確認:
+外部から確認 (証明書なし → 403 を期待):
 ```bash
 curl -H "X-API-Token: <token>" https://kumatool.duckdns.org/nsips-stats/health
+# → 403 "client cert required"
+```
+
+外部から確認 (証明書あり → 200 を期待):
+```bash
+curl -H "X-API-Token: <token>" \
+     --cert ~/dev/nsips-stats-api/deploy/certs/client-test-macos.crt \
+     --key ~/dev/nsips-stats-api/deploy/certs/client-test-macos.key \
+     https://kumatool.duckdns.org/nsips-stats/health
+# → {"status":"ok"}
 ```
 
 ## 更新デプロイ
@@ -1896,17 +2047,22 @@ class StatsClient:
         self,
         base_url: str,
         token: str,
+        cert: tuple[str, str] | None = None,   # (cert_path, key_path) for mTLS
         transport: httpx.BaseTransport | None = None,
         timeout: float = 10.0,
     ) -> None:
         self.base_url = base_url.rstrip("/")
         self.token = token
-        self._client = httpx.Client(
+        client_kwargs = dict(
             base_url=self.base_url,
             timeout=timeout,
-            transport=transport,
             headers={"X-API-Token": self.token},
         )
+        if transport is not None:
+            client_kwargs["transport"] = transport
+        if cert is not None:
+            client_kwargs["cert"] = cert
+        self._client = httpx.Client(**client_kwargs)
 
     def close(self) -> None:
         self._client.close()
@@ -2211,15 +2367,31 @@ git commit -m "feat(client): NsipsHandler に stats 送信 (record 1 除外 + �
             cfg = load_config(self.cfg_path)
             url = cfg.get("api_base_url")
             token = cfg.get("api_token")
-            if not url or not token:
+            cert_path = cfg.get("client_cert_path")
+            key_path = cfg.get("client_key_path")
+            missing = []
+            if not url:
+                missing.append("api_base_url")
+            if not token:
+                missing.append("api_token")
+            if not cert_path or not Path(cert_path).is_file():
+                missing.append("client_cert_path (mTLS 証明書)")
+            if not key_path or not Path(key_path).is_file():
+                missing.append("client_key_path (mTLS 秘密鍵)")
+            if missing:
                 messagebox.showinfo(
                     "API 設定",
-                    "config.json に api_base_url と api_token を設定してください。\n"
-                    "統計送信はスキップされます。",
+                    "config.json に以下を設定してください:\n\n"
+                    + "\n".join(f"- {m}" for m in missing)
+                    + "\n\n統計送信はスキップされます。",
                     parent=self.root,
                 )
                 return
-            self.stats_client = StatsClient(base_url=url, token=token)
+            self.stats_client = StatsClient(
+                base_url=url,
+                token=token,
+                cert=(cert_path, key_path),
+            )
 ```
 
 さらに `_start_observer` を修正、`NsipsHandler` に stats_client/crypto_key を渡す:
@@ -2682,13 +2854,31 @@ git push
 
 ## Task 23: Windows PC + rag-server 統合手動確認
 
-- [ ] **Step 1: サーバー疎通**
+- [ ] **Step 1: サーバー疎通 (mTLS 検証込み)**
 
 ```bash
-# rag-server 上で
+# 証明書なしで 403 を確認
 curl -H "X-API-Token: <token>" https://kumatool.duckdns.org/nsips-stats/health
+# → 403 "client cert required"
+
+# 証明書付きで 200 を確認
+curl -H "X-API-Token: <token>" \
+     --cert ~/dev/nsips-stats-api/deploy/certs/client-test-macos.crt \
+     --key ~/dev/nsips-stats-api/deploy/certs/client-test-macos.key \
+     https://kumatool.duckdns.org/nsips-stats/health
 # → {"status":"ok"}
 ```
+
+- [ ] **Step 1.5: 薬局 PC 用の証明書を発行 + USB で配布**
+
+```bash
+# 開発者 macOS で
+cd ~/dev/nsips-stats-api
+./deploy/gen_certs.sh client solamichi-pc
+# → deploy/certs/client-solamichi-pc.crt + .key
+```
+
+USB に `client-solamichi-pc.crt` と `client-solamichi-pc.key` をコピーして薬局 PC の `C:\nsips-watcher\` にコピー配置。
 
 - [ ] **Step 2: 薬局 PC で最新版を pull + 依存更新**
 
@@ -2698,9 +2888,17 @@ git pull
 pip install -r requirements-dev.txt
 ```
 
-- [ ] **Step 3: `config.json` に api 設定を追記**
+- [ ] **Step 3: `config.json` に api + mTLS 設定を追記**
 
-`{"base_dir":"...","api_base_url":"https://kumatool.duckdns.org/nsips-stats","api_token":"<token>"}` になるように編集。
+```json
+{
+  "base_dir": "C:\\solamichi\\solamichiclient\\client\\LOG\\NSIPS\\OK",
+  "api_base_url": "https://kumatool.duckdns.org/nsips-stats",
+  "api_token": "<token>",
+  "client_cert_path": "C:\\nsips-watcher\\client-solamichi-pc.crt",
+  "client_key_path": "C:\\nsips-watcher\\client-solamichi-pc.key"
+}
+```
 
 - [ ] **Step 4: 起動 + テスト .txt 検知**
 
