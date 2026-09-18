@@ -212,6 +212,8 @@ def parse_nsips(body: str) -> dict:
                         "drug_fee_per_unit": _to_int(_col(fields, 3)),
                         "quantity": _to_int(_col(fields, 4)),
                         "total": _to_int(_col(fields, 5)),
+                        # 末尾 (position 28): 内服調剤料 (28日以上=60点, 27日以下=10点, 外用=0)
+                        "internal_dispensing_fee": _to_int(_col(fields, 28)),
                     }
                 )
 
