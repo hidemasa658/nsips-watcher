@@ -1,6 +1,107 @@
 from pathlib import Path
 
-from nsips_parser import parse_nsips, sanitize_body
+from nsips_parser import (
+    classify_form,
+    get_dosage_form_code,
+    parse_nsips,
+    sanitize_body,
+)
+
+
+def test_classify_form_external_ointment():
+    assert classify_form("2646730M1059") == "外用"  # M = 軟膏
+
+
+def test_classify_form_external_lotion():
+    assert classify_form("3339950Q1147") == "外用"  # Q = ローション
+
+
+def test_classify_form_external_cream():
+    assert classify_form("2655709N1096") == "外用"  # N = クリーム
+
+
+def test_classify_form_unknown_letter_returns_other():
+    assert classify_form("YYYYYYYZ0000") == "その他"  # Z は該当マップ外
+
+
+def test_classify_form_external_patch():
+    assert classify_form("YYYYYYYX1000") == "外用"  # X = 貼付
+
+
+def test_classify_form_internal_tablet():
+    assert classify_form("6152004F2089") == "内服"  # F = 錠
+
+
+def test_classify_form_internal_syrup():
+    assert classify_form("6135001R2110") == "内服"  # R = 咀嚼/散/顆粒等 内服
+
+
+def test_classify_form_short_yj_returns_other():
+    assert classify_form(None) == "その他"
+    assert classify_form("") == "その他"
+    assert classify_form("ABC") == "その他"
+
+
+def test_get_dosage_form_code():
+    assert get_dosage_form_code("2646730M1059") == "M"
+    assert get_dosage_form_code("6152004F2089") == "F"
+    assert get_dosage_form_code(None) is None
+    assert get_dosage_form_code("AB") is None
+
+
+def test_parse_extracts_ointment_quantity_from_position_16():
+    # 軟膏の処方量 30g が position 16 に入る
+    body = (
+        "4,1,1,1,2646730M1059,620008965,,21340,アンテベート軟膏,ベタメタゾン,"
+        "0,0,0,0,0,0,30,1,ｇ,0,0,0,0,1,18.9,,,,,,,,0,0,,0,,,,,,0\n"
+    )
+    result = parse_nsips(body)
+    d = result["drugs"][0]
+    assert d["form"] == "外用"
+    assert d["quantity"] == 30.0  # 外用は position 16 (30g)
+    assert d["unit"] == "ｇ"
+
+
+def test_parse_extracts_tablet_quantity_from_position_24():
+    body = (
+        "4,1,1,1,6152004F2089,620006084,,7315,ビブラマイシン錠100mg,ドキシサイクリン,"
+        "0,0,0,0,0,0,1,1,錠,0,0,0,0,1,22,,,,,,,0,0,,,0,,,,,,0\n"
+    )
+    result = parse_nsips(body)
+    d = result["drugs"][0]
+    assert d["form"] == "内服"
+    assert d["quantity"] == 22.0  # 内服は position 24 (22 錠 総数)
+    assert d["unit"] == "錠"
+
+
+def test_parse_extracts_rps_from_record_3():
+    body = (
+        "3,1,244,分3 毎食後服用,,,,,2,1,7,3,,1,0,0,,,,,,\n"
+        "4,1,1,1,6135001R2110,616130333,,8367,ホスミシン,ホスホマイシン,"
+        "0,0,0,0,0,0,3,1,ｇ,0,0,0,0,1,86.2\n"
+    )
+    result = parse_nsips(body)
+    assert len(result["rps"]) == 1
+    rp = result["rps"][0]
+    assert rp["rp_no"] == "1"
+    assert rp["usage_text"] == "分3 毎食後服用"
+    assert rp["drug_count"] == 1
+    assert rp["is_mixed"] is False
+
+
+def test_parse_detects_mixed_rp_by_drug_count():
+    """RP に record 4 が 2 個以上あれば混合として扱う。"""
+    body = (
+        "3,4,7914,1日2回塗布,477,混合,522,体幹四肢,4,3,0,0,,2,0,0,,,,,,\n"
+        "4,1,4,1,2646701M2202,x,x,x,ベタメタゾン軟膏,x,0,0,0,0,0,0,50,1,ｇ,0,0,0,0,1,8\n"
+        "4,2,4,1,3339950M1153,x,x,x,ヘパリン油性クリーム,x,0,0,0,0,0,0,50,1,ｇ,0,0,0,0,1,6.3\n"
+    )
+    result = parse_nsips(body)
+    rp = result["rps"][0]
+    assert rp["rp_no"] == "4"
+    assert rp["drug_count"] == 2
+    assert rp["is_mixed"] is True
+    assert rp["site_text"] == "混合"
 
 
 def test_sanitize_body_removes_record_1_lines():
@@ -31,7 +132,7 @@ def _load() -> str:
 
 def test_parse_returns_dict_with_expected_keys():
     result = parse_nsips(_load())
-    assert set(result.keys()) == {"prescription", "drugs", "fees"}
+    assert set(result.keys()) == {"prescription", "drugs", "fees", "rps"}
 
 
 def test_parse_extracts_prescription_from_record_2():
@@ -80,4 +181,4 @@ def test_parse_defensive_short_line():
 
 def test_parse_empty_input():
     result = parse_nsips("")
-    assert result == {"prescription": {}, "drugs": [], "fees": []}
+    assert result == {"prescription": {}, "drugs": [], "fees": [], "rps": []}

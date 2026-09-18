@@ -95,13 +95,17 @@ class NsipsHandler(PatternMatchingEventHandler):
             "drugs": [
                 {
                     "rp_no_enc": encrypt_field(k, d.get("rp_no")),
+                    "rp_no": d.get("rp_no"),  # 平文 (RP 集計用)
                     "yj_code": d.get("yj_code"),
                     "name": d.get("name"),
                     "quantity": d.get("quantity"),
                     "unit": d.get("unit"),
+                    "form": d.get("form"),
+                    "dosage_form_code": d.get("dosage_form_code"),
                 }
                 for d in parsed["drugs"]
             ],
+            "rps": parsed.get("rps", []),
             "fees": [
                 {
                     "fee_type": f.get("fee_type"),
