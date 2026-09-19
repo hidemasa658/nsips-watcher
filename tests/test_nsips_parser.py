@@ -155,7 +155,13 @@ def _load() -> str:
 
 def test_parse_returns_dict_with_expected_keys():
     result = parse_nsips(_load())
-    assert set(result.keys()) == {"prescription", "drugs", "fees", "rps", "drug_pricings", "totals"}
+    # 必ずあるキー
+    required = {"prescription", "drugs", "fees", "rps", "drug_pricings", "totals"}
+    assert required.issubset(set(result.keys()))
+    # 任意キー (VER 有: dispensed_at、record 2 [4] 有: dispense_date)
+    optional_allowed = {"dispense_date", "dispensed_at"}
+    extra = set(result.keys()) - required
+    assert extra.issubset(optional_allowed), f"unexpected keys: {extra - optional_allowed}"
 
 
 def test_parse_extracts_prescription_from_record_2():
