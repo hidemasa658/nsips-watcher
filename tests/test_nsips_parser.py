@@ -251,16 +251,24 @@ def test_parse_external_total_quantity_equals_quantity():
 
 
 def test_parse_extracts_totals_from_record_5():
-    """record 5 の全体集計 (請求点数、患者負担金 等) を抽出。"""
+    """record 5 の全体集計 (経営指標) を抽出。
+    検算: [1]+[2]+[3]+[7]+[8] = [5]
+    """
     body = "5,84,24,119,0,329,0,62,40,59,0,60,329,990,0,0,0,990,990,990,0,0,0\n"
     result = parse_nsips(body)
     t = result["totals"]
-    assert t["total_points"] == 329
-    assert t["dispensing_base_fee"] == 62
-    assert t["night_holiday_fee"] == 40
-    assert t["management_fee"] == 59
-    assert t["long_prescription_fee"] == 60
-    assert t["patient_copay"] == 990
+    assert t["drug_fee"] == 84              # [1] 薬剤料
+    assert t["dispensing_fee_total"] == 24  # [2] 調剤料
+    assert t["pharmacy_mgmt_fee_total"] == 119  # [3] 薬学管理料
+    assert t["total_points"] == 329         # [5] 請求点数
+    assert t["dispensing_base_fee"] == 62   # [7] 調剤基本料
+    assert t["dispensing_add_fee"] == 40    # [8] 調剤加算 (計量混合等)
+    assert t["drug_guidance_fee"] == 59     # [9] 服薬管理指導料
+    assert t["pharmacy_mgmt_other"] == 60   # [11] 薬学管理料 残り
+    assert t["patient_copay"] == 990        # [13] 患者負担金 (円)
+    # 検算: [1]+[2]+[3]+[7]+[8] = [5]
+    assert t["drug_fee"] + t["dispensing_fee_total"] + t["pharmacy_mgmt_fee_total"] \
+        + t["dispensing_base_fee"] + t["dispensing_add_fee"] == t["total_points"]
 
 
 def test_parse_extracts_drug_pricing_from_record_6():
