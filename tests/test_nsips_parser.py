@@ -265,10 +265,22 @@ def test_parse_extracts_totals_from_record_5():
     assert t["dispensing_add_fee"] == 40    # [8] 調剤加算 (計量混合等)
     assert t["drug_guidance_fee"] == 59     # [9] 服薬管理指導料
     assert t["pharmacy_mgmt_other"] == 60   # [11] 薬学管理料 残り
-    assert t["patient_copay"] == 990        # [13] 患者負担金 (円)
+    assert t["patient_copay"] == 990        # [13] 患者負担金 (保険内)
+    assert t["patient_copay_total"] == 990  # [17] 総患者負担 (=[13] なので選定療養なし)
     # 検算: [1]+[2]+[3]+[7]+[8] = [5]
     assert t["drug_fee"] + t["dispensing_fee_total"] + t["pharmacy_mgmt_fee_total"] \
         + t["dispensing_base_fee"] + t["dispensing_add_fee"] == t["total_points"]
+
+
+def test_parse_extracts_senteryoyo_fee():
+    """選定療養費: [17] > [13] のケースで差額が選定療養費 (長期収載品)。"""
+    # #260 の record 5: 保険内 1500 円, 総 1533 円 → 差 33 円
+    body = "5,223,44,106,0,499,0,70,56,45,0,60,499,1500,0,0,0,1533,1533,1533,0,30,3\n"
+    result = parse_nsips(body)
+    t = result["totals"]
+    assert t["patient_copay"] == 1500
+    assert t["patient_copay_total"] == 1533
+    assert t["patient_copay_total"] - t["patient_copay"] == 33  # 選定療養費
 
 
 def test_parse_extracts_drug_pricing_from_record_6():
