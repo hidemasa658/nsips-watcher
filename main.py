@@ -82,7 +82,8 @@ class NsipsHandler(PatternMatchingEventHandler):
     def _build_ingest_payload(self, path: Path, ts: datetime, parsed: dict, body: str = "") -> dict:
         k = self.crypto_key
         p = parsed["prescription"]
-        source_id = hashlib.sha256(str(path).encode("utf-8")).hexdigest()
+        # batch_import.py と揃える: ファイル名ベース (フルパスだと監視元PC変更で衝突)
+        source_id = hashlib.sha256(path.name.encode("utf-8")).hexdigest()
 
         return {
             "source_id": source_id,
@@ -461,7 +462,11 @@ def main() -> None:
             self._save_csv("clinics.csv", ["医療機関コード", "医療機関名", "件数"], data)
 
         def scan_and_resend_missing(self) -> None:
-            """監視フォルダの全 .txt を VPS の source_id と照合し、未送信のみ送信。"""
+            """監視フォルダの全 .txt を VPS の source_id と照合し、未送信のみ送信。
+
+            バックグラウンドスレッドで実行し、進捗ダイアログを表示。
+            50件バッチで送信 + 各バッチ後 0.3秒 sleep で VPS 過負荷を回避。
+            """
             if self.stats_client is None or self.base_dir is None:
                 messagebox.showwarning("警告", "監視ディレクトリまたは Stats client が未設定", parent=self.root)
                 return
@@ -470,48 +475,112 @@ def main() -> None:
                 messagebox.showinfo("スキャン結果", "フォルダに .txt がありません", parent=self.root)
                 return
 
-            # source_id 計算 (server と同じ: sha256 of str(path))
-            source_ids: dict[str, Path] = {}
+            # source_id 計算: ファイル名 hash (新) + フルパス hash (旧 live watcher/scan 分)
+            # サーバ DB には両方の hash が混在するため、両方で照合して重複回避
+            file_hashes: list[tuple[Path, str, str]] = []
+            all_hashes: list[str] = []
             for f in files:
                 p = f.resolve()
-                sid = hashlib.sha256(str(p).encode("utf-8")).hexdigest()
-                source_ids[sid] = p
+                h_name = hashlib.sha256(f.name.encode("utf-8")).hexdigest()
+                h_path = hashlib.sha256(str(p).encode("utf-8")).hexdigest()
+                file_hashes.append((p, h_name, h_path))
+                all_hashes.append(h_name)
+                all_hashes.append(h_path)
 
-            # サーバに存在確認
+            # サーバに存在確認 (両方の hash を投げる)
             try:
-                existing = self.stats_client.check_source_ids(list(source_ids.keys()))
+                existing = self.stats_client.check_source_ids(all_hashes)
             except Exception as e:
                 messagebox.showerror("エラー", f"サーバー問い合わせ失敗: {e}", parent=self.root)
                 return
 
-            missing = [p for sid, p in source_ids.items() if sid not in existing]
+            missing = [p for p, h_name, h_path in file_hashes
+                       if h_name not in existing and h_path not in existing]
+            if not missing:
+                messagebox.showinfo("未送信スキャン", f"全 {len(files)} 件送信済みです ✓", parent=self.root)
+                return
+
             if not messagebox.askyesno(
                 "未送信スキャン",
                 f"全 {len(files)} 件中、未送信 {len(missing)} 件を検出しました。\n\n"
-                f"今から送信しますか？",
+                f"バッチ50件・50件毎に0.3秒待機して送信します。\n"
+                f"目安: 約 {len(missing) * 0.3 / 60:.1f} 分\n\n"
+                f"開始しますか？",
                 parent=self.root,
             ):
                 return
 
-            # 送信 (既存の _process ロジックを再利用)
-            sent = 0
-            failed = 0
-            for p in missing:
-                try:
-                    if self.handler is not None:
-                        # existing set から一時的に除外して _process を呼ぶ
-                        with self.handler._lock:
-                            self.handler.existing.discard(p)
-                        self.handler._process(str(p))
-                        sent += 1
-                except Exception:
-                    failed += 1
-            messagebox.showinfo(
-                "スキャン完了",
-                f"送信完了: {sent} 件\n失敗: {failed} 件\n"
-                f"VPS にログ届いてるか /dashboard で確認してください",
-                parent=self.root,
-            )
+            self._run_scan_worker(missing)
+
+        def _run_scan_worker(self, missing: list) -> None:
+            """進捗ダイアログ + スレッドで missing files を送信。"""
+            import time
+
+            total = len(missing)
+            cancel_flag = {"canceled": False}
+            result = {"sent": 0, "failed": 0, "done": False}
+
+            # 進捗ダイアログ
+            dlg = tk.Toplevel(self.root)
+            dlg.title("未送信スキャン 送信中")
+            dlg.geometry("450x140")
+            dlg.transient(self.root)
+            dlg.grab_set()
+
+            lbl = tk.Label(dlg, text=f"送信中: 0 / {total}", font=("Meiryo", 11))
+            lbl.pack(pady=(15, 5))
+            pb = ttk.Progressbar(dlg, mode="determinate", maximum=total, length=400)
+            pb.pack(padx=20, pady=5)
+            sub_lbl = tk.Label(dlg, text="", font=("Meiryo", 9), fg="gray")
+            sub_lbl.pack(pady=2)
+
+            def do_cancel() -> None:
+                cancel_flag["canceled"] = True
+                cancel_btn.config(state="disabled", text="停止中…")
+
+            cancel_btn = tk.Button(dlg, text="中止", command=do_cancel, width=12)
+            cancel_btn.pack(pady=5)
+
+            def worker() -> None:
+                BATCH = 50
+                SLEEP_SEC = 0.3
+                for i, p in enumerate(missing):
+                    if cancel_flag["canceled"]:
+                        break
+                    try:
+                        if self.handler is not None:
+                            with self.handler._lock:
+                                self.handler.existing.discard(p)
+                            self.handler._process(str(p))
+                            result["sent"] += 1
+                        else:
+                            result["failed"] += 1
+                    except Exception:
+                        result["failed"] += 1
+                    # バッチ境界で sleep
+                    if (i + 1) % BATCH == 0 and i + 1 < len(missing):
+                        time.sleep(SLEEP_SEC)
+                result["done"] = True
+
+            th = threading.Thread(target=worker, daemon=True)
+            th.start()
+
+            def poll() -> None:
+                done_count = result["sent"] + result["failed"]
+                pb["value"] = done_count
+                lbl.config(text=f"送信中: {done_count} / {total}")
+                if result["failed"]:
+                    sub_lbl.config(text=f"失敗: {result['failed']} 件")
+                if result["done"] or cancel_flag["canceled"] and not th.is_alive():
+                    cancel_btn.config(text="閉じる", state="normal", command=dlg.destroy)
+                    if cancel_flag["canceled"]:
+                        lbl.config(text=f"中止: {done_count} / {total} 送信")
+                    else:
+                        lbl.config(text=f"完了: {result['sent']} 件送信 / {result['failed']} 件失敗")
+                    return
+                dlg.after(200, poll)
+
+            dlg.after(200, poll)
 
         def export_prescriptions_csv(self) -> None:
             if self.stats_client is None:
