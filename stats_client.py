@@ -53,3 +53,15 @@ class StatsClient:
         r = self._client.get("/stats/export/prescriptions")
         r.raise_for_status()
         return r.json()["rows"]
+
+    def check_source_ids(self, source_ids: list[str]) -> set[str]:
+        """指定 source_id のうち サーバに既存のものだけ set で返す。
+        500 件ずつバッチ処理。未送信スキャン用。"""
+        existing: set[str] = set()
+        BATCH = 500
+        for i in range(0, len(source_ids), BATCH):
+            batch = source_ids[i:i + BATCH]
+            r = self._client.post("/api/check_source_ids", json={"source_ids": batch})
+            r.raise_for_status()
+            existing.update(r.json().get("existing", []))
+        return existing

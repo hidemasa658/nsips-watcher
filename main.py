@@ -301,6 +301,10 @@ def main() -> None:
                       command=self.export_clinics_csv, width=30).pack(pady=8, padx=8, anchor="w")
             tk.Button(tab_export, text="全 prescriptions を CSV 保存",
                       command=self.export_prescriptions_csv, width=30).pack(pady=8, padx=8, anchor="w")
+            tk.Label(tab_export, text=" ").pack(pady=4)
+            tk.Label(tab_export, text="── 未送信スキャン ──", font=("Meiryo", 10, "bold")).pack(anchor="w", padx=8)
+            tk.Button(tab_export, text="🔍 監視フォルダの未送信 .txt を検出 → 送信",
+                      command=self.scan_and_resend_missing, width=40).pack(pady=8, padx=8, anchor="w")
             self.notebook.add(tab_export, text="エクスポート")
 
             self.notebook.bind("<<NotebookTabChanged>>", self._on_tab_changed)
@@ -455,6 +459,59 @@ def main() -> None:
                     code, name = "[decrypt error]", "[decrypt error]"
                 data.append([code, name, r.get("n") or 0])
             self._save_csv("clinics.csv", ["医療機関コード", "医療機関名", "件数"], data)
+
+        def scan_and_resend_missing(self) -> None:
+            """監視フォルダの全 .txt を VPS の source_id と照合し、未送信のみ送信。"""
+            if self.stats_client is None or self.base_dir is None:
+                messagebox.showwarning("警告", "監視ディレクトリまたは Stats client が未設定", parent=self.root)
+                return
+            files = sorted(self.base_dir.glob("*.txt"))
+            if not files:
+                messagebox.showinfo("スキャン結果", "フォルダに .txt がありません", parent=self.root)
+                return
+
+            # source_id 計算 (server と同じ: sha256 of str(path))
+            source_ids: dict[str, Path] = {}
+            for f in files:
+                p = f.resolve()
+                sid = hashlib.sha256(str(p).encode("utf-8")).hexdigest()
+                source_ids[sid] = p
+
+            # サーバに存在確認
+            try:
+                existing = self.stats_client.check_source_ids(list(source_ids.keys()))
+            except Exception as e:
+                messagebox.showerror("エラー", f"サーバー問い合わせ失敗: {e}", parent=self.root)
+                return
+
+            missing = [p for sid, p in source_ids.items() if sid not in existing]
+            if not messagebox.askyesno(
+                "未送信スキャン",
+                f"全 {len(files)} 件中、未送信 {len(missing)} 件を検出しました。\n\n"
+                f"今から送信しますか？",
+                parent=self.root,
+            ):
+                return
+
+            # 送信 (既存の _process ロジックを再利用)
+            sent = 0
+            failed = 0
+            for p in missing:
+                try:
+                    if self.handler is not None:
+                        # existing set から一時的に除外して _process を呼ぶ
+                        with self.handler._lock:
+                            self.handler.existing.discard(p)
+                        self.handler._process(str(p))
+                        sent += 1
+                except Exception:
+                    failed += 1
+            messagebox.showinfo(
+                "スキャン完了",
+                f"送信完了: {sent} 件\n失敗: {failed} 件\n"
+                f"VPS にログ届いてるか /dashboard で確認してください",
+                parent=self.root,
+            )
 
         def export_prescriptions_csv(self) -> None:
             if self.stats_client is None:
