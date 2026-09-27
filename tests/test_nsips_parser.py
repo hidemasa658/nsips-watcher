@@ -236,15 +236,19 @@ def test_parse_empty_input():
 
 
 def test_parse_calculates_internal_total_quantity():
-    """内服総量 = 1回量 × 回数/日 × 日数 (record 3 と結合)"""
+    """内服総量 = 1日量 × 日数 (record 4 [16] は 1日量、record 3 [10] は日数)。
+
+    NSIPS record 4 [16] は「1日量」を記録するのが実データの標準。
+    以前 × times_per_day もしていたが 過大計算バグだった (実データで検証済)。
+    """
     body = (
-        "3,1,244,分3 毎食後,,,,,2,1,7,3,,1,0,0,,,,,,\n"           # 7日 × 3回/日
-        "4,1,1,1,6152004F2089,x,x,x,ビブラマイシン錠,x,0,0,0,0,0,0,1,1,錠,0,0,0,0,1,22\n"  # 1回1錠
+        "3,1,244,分3 毎食後,,,,,2,1,7,3,,1,0,0,,,,,,\n"           # [10]=7 日
+        "4,1,1,1,6152004F2089,x,x,x,ビブラマイシン錠,x,0,0,0,0,0,0,3,1,錠,0,0,0,0,1,22\n"  # [16]=3 (1日3錠)
     )
     result = parse_nsips(body)
     d = result["drugs"][0]
-    assert d["quantity"] == 1.0  # 1回量
-    assert d["total_quantity"] == 21.0  # 1 * 3 * 7 = 21 錠
+    assert d["quantity"] == 3.0  # 1日量
+    assert d["total_quantity"] == 21.0  # 3 * 7 = 21 錠
 
 
 def test_parse_external_total_quantity_equals_quantity():
